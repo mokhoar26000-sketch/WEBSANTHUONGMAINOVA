@@ -20,9 +20,9 @@ export const hasFirebaseConfig = Boolean(
   firebaseConfig.appId,
 )
 
-const firebaseApp = initializeApp(firebaseConfig)
-export const analytics = getAnalytics(firebaseApp)
-export const auth = getAuth(firebaseApp)
-export const db = getFirestore(firebaseApp)
+const firebaseApp = hasFirebaseConfig ? initializeApp(firebaseConfig) : null
+export const analytics = firebaseApp ? getAnalytics(firebaseApp) : null
+export const auth = firebaseApp ? getAuth(firebaseApp) : null
+export const db = firebaseApp ? getFirestore(firebaseApp) : null
 export { onAuthStateChanged }
 export default firebaseApp

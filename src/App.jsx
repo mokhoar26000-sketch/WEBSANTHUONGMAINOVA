@@ -56,7 +56,10 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
 
-  useEffect(() => onAuthStateChanged(auth, async (firebaseUser) => {
+  useEffect(() => {
+    if (!auth) return undefined
+
+    return onAuthStateChanged(auth, async (firebaseUser) => {
     setCurrentUser(firebaseUser)
     if (!firebaseUser) {
       setUserProfile(null)
@@ -65,7 +68,8 @@ function App() {
 
     const profile = await getDoc(doc(db, 'users', firebaseUser.uid))
     setUserProfile(profile.exists() ? profile.data() : null)
-  }), [])
+    })
+  }, [])
 
   useEffect(() => {
     if (!hasFirebaseConfig) return
