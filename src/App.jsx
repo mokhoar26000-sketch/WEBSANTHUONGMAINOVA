@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { collection, doc, getDocs, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
+import { collection, doc, getDocs, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth'
 import {
   ArrowRight,
@@ -53,8 +53,10 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [shopOpen, setShopOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
 
   useEffect(() => {
     if (!auth) return undefined
@@ -63,11 +65,19 @@ function App() {
     setCurrentUser(firebaseUser)
     if (!firebaseUser) {
       setUserProfile(null)
+      setAuthReady(true)
       return
     }
 
     const profile = await getDoc(doc(db, 'users', firebaseUser.uid))
+    if (profile.exists() && profile.data().status === 'blocked') {
+      setUserProfile(null)
+      await signOut(auth)
+      setAuthReady(true)
+      return
+    }
     setUserProfile(profile.exists() ? profile.data() : null)
+    setAuthReady(true)
     })
   }, [])
 
@@ -91,6 +101,13 @@ function App() {
   const addToCart = (product) => setCart((current) => [...current, product])
   const toggleLike = (id) => setLiked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
   const total = cart.reduce((sum, product) => sum + product.price, 0)
+
+  if (window.location.pathname.replace(/\/+$/, '') === '/admin') {
+    if (!authReady) return <div className="admin-loading">Đang kiểm tra quyền truy cập...</div>
+    if (!currentUser || !userProfile) return <AdminAccessDenied onBack={() => window.location.assign('/')} />
+    if (userProfile.role !== 'admin') return <AdminAccessDenied onBack={() => window.location.assign('/')} />
+    return <AdminWorkspace onClose={() => window.location.assign('/')} />
+  }
 
   return (
     <div className="app-shell">
@@ -118,7 +135,8 @@ function App() {
           <a href="#fashion">Thời trang</a>
           <a href="#food">Thực phẩm</a>
           <a href="#pet">Thú cưng</a>
-          <a href="#seller" className="seller-link">Kênh người bán <ArrowRight size={14} /></a>
+          {currentUser && userProfile?.role !== 'shop' && userProfile?.role !== 'admin' && <button className="seller-link nav-button" onClick={() => setShopOpen(true)}>Đăng ký bán hàng <ArrowRight size={14} /></button>}
+          {userProfile?.role === 'admin' && <a className="seller-link" href="/admin">Quản lý <ArrowRight size={14} /></a>}
         </nav>
       </header>
 
@@ -164,6 +182,7 @@ function App() {
 
       {cartOpen && <div className="drawer-backdrop" onClick={() => setCartOpen(false)}><aside className="cart-drawer" onClick={(event) => event.stopPropagation()}><div className="drawer-header"><h2>Giỏ hàng <span>({cart.length})</span></h2><button onClick={() => setCartOpen(false)} aria-label="Đóng"><X size={21} /></button></div>{cart.length === 0 ? <div className="empty-cart"><ShoppingBag size={38} /><h3>Giỏ hàng đang trống</h3><p>Thêm món đồ đầu tiên để bắt đầu hành trình của bạn.</p></div> : <><div className="cart-items">{cart.map((product, index) => <div className="cart-item" key={`${product.id}-${index}`}><img src={product.image} alt="" /><div><strong>{product.name}</strong><span>{formatPrice(product.price)}</span></div></div>)}</div><div className="cart-total"><span>Tạm tính</span><strong>{formatPrice(total)}</strong></div><button className="primary-button checkout-button">Tiến hành thanh toán <ArrowRight size={17} /></button></>}</aside></div>}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onSignedIn={() => setAuthOpen(false)} />}
+      {shopOpen && <ShopRegistrationModal currentUser={currentUser} profile={userProfile} onClose={() => setShopOpen(false)} />}
       {profileOpen && <ProfileModal profile={userProfile} firebaseUser={currentUser} onClose={() => setProfileOpen(false)} onSignOut={() => { setProfileOpen(false); signOut(auth) }} />}
     </div>
   )
@@ -228,8 +247,205 @@ function AuthModal({ onClose, onSignedIn }) {
   return <div className="auth-backdrop" onClick={onClose}><section className="auth-modal" onClick={(event) => event.stopPropagation()}><button className="auth-close" onClick={onClose} aria-label="Đóng"><X size={20} /></button><div className="auth-brand"><span className="brand-mark">N</span><span>NOVA<span className="brand-dot">.</span></span></div><span className="section-kicker">{isForgot ? 'Khôi phục tài khoản' : 'Chào mừng bạn'}</span><h2>{mode === 'login' ? 'Đăng nhập để tiếp tục' : mode === 'register' ? 'Tạo tài khoản NOVA' : 'Quên mật khẩu?'}</h2><p className="auth-subtitle">{mode === 'login' ? 'Lưu sản phẩm yêu thích và theo dõi đơn hàng dễ dàng.' : mode === 'register' ? 'Tham gia cộng đồng mua sắm và trải nghiệm của NOVA.' : 'Nhập email đã đăng ký. Firebase sẽ gửi link an toàn để tạo mật khẩu mới.'}</p><form onSubmit={submit}>{mode === 'register' && <><label>Họ và tên<input name="name" value={form.name} onChange={updateField} placeholder="Nguyễn Văn A" required /></label><label>Số điện thoại<input name="phone" value={form.phone} onChange={updateField} placeholder="0901 234 567" type="tel" required /></label></>}<label>Email<input name="email" value={form.email} onChange={updateField} placeholder="ban@email.com" type="email" required /></label>{!isForgot && <label>Mật khẩu<input name="password" value={form.password} onChange={updateField} placeholder="Tối thiểu 6 ký tự" type="password" minLength="6" required /></label>}{error && <div className={`auth-error ${isForgot && error.startsWith('Đã gửi') ? 'auth-success' : ''}`}>{error}</div>}<button className="primary-button auth-submit" disabled={loading}>{loading ? 'Đang xử lý...' : mode === 'login' ? 'Đăng nhập' : mode === 'register' ? 'Đăng ký tài khoản' : 'Gửi email khôi phục'}</button></form><div className="auth-switch">{isForgot ? 'Nhớ mật khẩu rồi?' : mode === 'login' ? 'Chưa có tài khoản?' : 'Đã có tài khoản?'} <button onClick={() => { setError(''); setMode(isForgot || mode === 'register' ? 'login' : 'register') }}>{isForgot || mode === 'register' ? 'Đăng nhập' : 'Đăng ký ngay'}</button></div>{mode === 'login' && <button className="forgot-link" onClick={() => { setError(''); setMode('forgot') }}>Quên mật khẩu?</button>}<small className="auth-note">Mật khẩu được Firebase Authentication bảo vệ, không lưu trong bảng users.</small></section></div>
 }
 
+function ShopRegistrationModal({ currentUser, profile, onClose }) {
+  const [form, setForm] = useState({ shopName: '', description: '', phone: '', address: '' })
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const submit = async (event) => {
+    event.preventDefault()
+    setLoading(true)
+    setMessage('')
+    try {
+      const shopRef = doc(collection(db, 'shops'))
+      await setDoc(shopRef, {
+        shopId: shopRef.id,
+        userId: currentUser.uid,
+        shopName: form.shopName.trim(),
+        description: form.description.trim(),
+        phone: form.phone.trim(),
+        address: form.address.trim(),
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      })
+      setMessage('Đã gửi hồ sơ. Admin sẽ kiểm tra và phản hồi cho bạn.')
+    } catch (error) {
+      setMessage(error.code === 'permission-denied' ? 'Bạn chưa được phép gửi hồ sơ shop. Hãy triển khai firestore.rules mới.' : 'Không thể gửi hồ sơ lúc này.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return <div className="auth-backdrop" onClick={onClose}><section className="auth-modal shop-registration-modal" onClick={(event) => event.stopPropagation()}><button className="auth-close" onClick={onClose} aria-label="Đóng"><X size={20} /></button><div className="auth-brand"><span className="brand-mark">N</span><span>NOVA<span className="brand-dot">.</span></span></div><span className="section-kicker">Kênh người bán</span><h2>Đăng ký mở shop</h2><p className="auth-subtitle">Hồ sơ sẽ ở trạng thái chờ duyệt. Chỉ admin mới có quyền phê duyệt shop.</p><form onSubmit={submit}><label>Tên shop<input value={form.shopName} onChange={(event) => setForm({ ...form, shopName: event.target.value })} placeholder="Shop Gia Dụng HomeCare" required /></label><label>Mô tả shop<input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Bạn kinh doanh mặt hàng gì?" required /></label><label>Số điện thoại<input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="0901 234 567" type="tel" required /></label><label>Địa chỉ lấy hàng<input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Địa chỉ shop" required /></label>{message && <div className={`auth-error ${message.startsWith('Đã gửi') ? 'auth-success' : ''}`}>{message}</div>}<button className="primary-button auth-submit" disabled={loading}>{loading ? 'Đang gửi...' : 'Gửi hồ sơ xét duyệt'}</button></form><small className="auth-note">Tài khoản: {profile?.email || currentUser?.email}</small></section></div>
+}
+
+function AdminAccessDenied({ onBack }) {
+  return <main className="admin-page"><div className="admin-empty admin-access"><h2>Không có quyền truy cập</h2><p>Trang này chỉ dành cho tài khoản admin.</p><button className="primary-button" onClick={onBack}>Về trang mua sắm</button></div></main>
+}
+
+function AdminPanel({ onClose }) {
+  const [users, setUsers] = useState([])
+  const [shops, setShops] = useState([])
+  const [orders, setOrders] = useState([])
+  const [carts, setCarts] = useState([])
+  const [promotions, setPromotions] = useState([])
+  const [promoForm, setPromoForm] = useState({ code: '', discount: '', expiresAt: '' })
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const [userSnapshot, shopSnapshot, orderSnapshot, cartSnapshot, promotionSnapshot] = await Promise.all([
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'shops')),
+        getDocs(collection(db, 'orders')),
+        getDocs(collection(db, 'carts')),
+        getDocs(collection(db, 'promotions')),
+      ])
+      setUsers(userSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
+      setShops(shopSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
+      setOrders(orderSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
+      setCarts(cartSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
+      setPromotions(promotionSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })))
+      setError('')
+    } catch (loadError) {
+      setError(loadError.code === 'permission-denied' ? 'Tài khoản hiện tại chưa có quyền admin hoặc thiếu rules cho dashboard.' : 'Không thể tải dữ liệu quản trị.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadData() }, [])
+
+  const approveShop = async (shop) => {
+    try {
+      const batch = writeBatch(db)
+      batch.update(doc(db, 'shops', shop.id), { status: 'active', reviewedAt: serverTimestamp() })
+      batch.update(doc(db, 'users', shop.userId), { role: 'shop', updatedAt: serverTimestamp() })
+      await batch.commit()
+      await loadData()
+    } catch (approveError) { setError('Không thể duyệt shop.') }
+  }
+
+  const rejectShop = async (shop) => {
+    try { await updateDoc(doc(db, 'shops', shop.id), { status: 'rejected', reviewedAt: serverTimestamp() }); await loadData() } catch (rejectError) { setError('Không thể từ chối hồ sơ shop.') }
+  }
+
+  const toggleUser = async (user) => {
+    if (user.role === 'admin') return
+    try { await updateDoc(doc(db, 'users', user.id), { status: user.status === 'blocked' ? 'active' : 'blocked', updatedAt: serverTimestamp() }); await loadData() } catch (toggleError) { setError('Không thể cập nhật trạng thái tài khoản.') }
+  }
+
+  const promoteUser = async (user) => {
+    try { await updateDoc(doc(db, 'users', user.id), { role: 'shop', updatedAt: serverTimestamp() }); await loadData() } catch (promoteError) { setError('Không thể nâng tài khoản lên shop.') }
+  }
+
+  const updateOrderStatus = async (order, status) => {
+    try { await updateDoc(doc(db, 'orders', order.id), { status, updatedAt: serverTimestamp() }); await loadData() } catch (orderError) { setError('Không thể cập nhật đơn hàng.') }
+  }
+
+  const createPromotion = async (event) => {
+    event.preventDefault()
+    try {
+      const promotionRef = doc(collection(db, 'promotions'))
+      await setDoc(promotionRef, { promotionId: promotionRef.id, code: promoForm.code.trim().toUpperCase(), discount: Number(promoForm.discount), expiresAt: promoForm.expiresAt, status: 'active', createdAt: serverTimestamp() })
+      setPromoForm({ code: '', discount: '', expiresAt: '' })
+      await loadData()
+    } catch (promotionError) { setError('Không thể tạo khuyến mãi.') }
+  }
+
+  const togglePromotion = async (promotion) => {
+    try { await updateDoc(doc(db, 'promotions', promotion.id), { status: promotion.status === 'active' ? 'inactive' : 'active', updatedAt: serverTimestamp() }); await loadData() } catch (promotionError) { setError('Không thể cập nhật khuyến mãi.') }
+  }
+
+  const currentMonth = new Date()
+  const monthlyRevenue = orders.reduce((total, order) => {
+    const createdAt = order.createdAt?.toDate ? order.createdAt.toDate() : order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000) : null
+    if (!createdAt || createdAt.getFullYear() !== currentMonth.getFullYear() || createdAt.getMonth() !== currentMonth.getMonth() || order.status === 'cancelled') return total
+    return total + Number(order.total || 0)
+  }, 0)
+
+  return <main className="admin-page"><div className="admin-page-inner"><div className="admin-header"><div><span className="section-kicker">Quản trị hệ thống</span><h2>Dashboard admin</h2><p className="admin-subtitle">Quản lý toàn bộ vận hành của NOVA Market.</p></div><button className="outline-button" onClick={onClose}><ArrowRight size={15} /> Về trang mua sắm</button></div>{error && <div className="auth-error">{error}</div>}{loading ? <p className="admin-empty">Đang tải dữ liệu...</p> : <><div className="admin-stats"><div><strong>{formatPrice(monthlyRevenue)}</strong><span>Doanh thu tháng này</span></div><div><strong>{orders.length}</strong><span>Đơn hàng</span></div><div><strong>{carts.length}</strong><span>Giỏ hàng đang lưu</span></div><div><strong>{users.length}</strong><span>Tài khoản</span></div><div><strong>{shops.filter((shop) => shop.status === 'pending').length}</strong><span>Shop chờ duyệt</span></div><div><strong>{promotions.filter((promotion) => promotion.status === 'active').length}</strong><span>Khuyến mãi hoạt động</span></div></div><div className="admin-section"><div className="admin-section-title"><h3>Đơn hàng</h3><button className="outline-button" onClick={loadData}>Làm mới</button></div>{orders.length === 0 ? <p className="admin-empty">Chưa có đơn hàng.</p> : <div className="admin-list">{orders.slice(0, 20).map((order) => <div className="admin-row" key={order.id}><div><strong>#{order.id}</strong><small>Khách: {order.userId || 'Chưa có'} · {formatPrice(Number(order.total || 0))}</small></div><select className="admin-select" value={order.status || 'pending'} onChange={(event) => updateOrderStatus(order, event.target.value)}><option value="pending">Chờ xử lý</option><option value="paid">Đã thanh toán</option><option value="shipping">Đang giao</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option></select></div>)}</div>}</div><div className="admin-section"><div className="admin-section-title"><h3>Hồ sơ đăng ký shop</h3></div>{shops.length === 0 ? <p className="admin-empty">Chưa có hồ sơ đăng ký shop.</p> : <div className="admin-list">{shops.map((shop) => <div className="admin-row" key={shop.id}><div><strong>{shop.shopName}</strong><small>{shop.description} · Chủ shop: {shop.userId}</small></div><div className="admin-row-actions"><span className={`status-badge ${shop.status}`}>{shop.status === 'pending' ? 'Chờ duyệt' : shop.status === 'active' ? 'Đã duyệt' : 'Từ chối'}</span>{shop.status === 'pending' && <><button className="approve-button" onClick={() => approveShop(shop)}>Duyệt</button><button className="reject-button" onClick={() => rejectShop(shop)}>Từ chối</button></>}</div></div>)}</div>}</div><div className="admin-section"><div className="admin-section-title"><h3>Quản lý account</h3><span className="admin-caption">Nâng customer thành shop hoặc vô hiệu hóa</span></div><div className="admin-list">{users.map((user) => <div className="admin-row" key={user.id}><div><strong>{user.name || 'Chưa có tên'}</strong><small>{user.email} · {user.phone || 'Chưa có SĐT'}</small></div><div className="admin-row-actions"><span className="role-badge">{user.role || 'customer'}</span>{user.role === 'customer' && <button className="approve-button" onClick={() => promoteUser(user)}>Nâng lên shop</button>}{user.role !== 'admin' && <button className="reject-button" onClick={() => toggleUser(user)}>{user.status === 'blocked' ? 'Mở khóa' : 'Vô hiệu hóa'}</button>}</div></div>)}</div></div><div className="admin-section"><div className="admin-section-title"><h3>Khuyến mãi</h3><span className="admin-caption">Tạo và bật/tắt mã giảm giá</span></div><form className="promotion-form" onSubmit={createPromotion}><input value={promoForm.code} onChange={(event) => setPromoForm({ ...promoForm, code: event.target.value })} placeholder="Mã, ví dụ NOVA10" required /><input value={promoForm.discount} onChange={(event) => setPromoForm({ ...promoForm, discount: event.target.value })} type="number" min="1" placeholder="Giảm %" required /><input value={promoForm.expiresAt} onChange={(event) => setPromoForm({ ...promoForm, expiresAt: event.target.value })} type="date" required /><button className="primary-button" type="submit">Tạo khuyến mãi</button></form><div className="admin-list">{promotions.map((promotion) => <div className="admin-row" key={promotion.id}><div><strong>{promotion.code} · Giảm {promotion.discount}%</strong><small>Hết hạn: {promotion.expiresAt || 'Không có'}</small></div><button className={promotion.status === 'active' ? 'approve-button' : 'reject-button'} onClick={() => togglePromotion(promotion)}>{promotion.status === 'active' ? 'Đang bật' : 'Đã tắt'}</button></div>)}</div></div></>}</div></main>
+}
+
 function ProfileModal({ profile, firebaseUser, onClose, onSignOut }) {
   return <div className="auth-backdrop" onClick={onClose}><section className="profile-modal" onClick={(event) => event.stopPropagation()}><button className="auth-close" onClick={onClose} aria-label="Đóng"><X size={20} /></button><div className="profile-avatar"><UserRound size={28} /></div><span className="section-kicker">Tài khoản của bạn</span><h2>{profile?.name || 'Thành viên NOVA'}</h2><p className="auth-subtitle">Thông tin cá nhân và quyền tài khoản</p><div className="profile-details"><div><small>Mã người dùng</small><strong>{profile?.userId || firebaseUser?.uid}</strong></div><div><small>Email</small><strong>{profile?.email || firebaseUser?.email}</strong></div><div><small>Số điện thoại</small><strong>{profile?.phone || 'Chưa cập nhật'}</strong></div><div><small>Vai trò</small><strong className="role-badge">{profile?.role || 'customer'}</strong></div></div><button className="logout-button" onClick={onSignOut}><LogOut size={16} /> Đăng xuất</button></section></div>
+}
+
+function AdminWorkspace({ onClose }) {
+  const [activeView, setActiveView] = useState('overview')
+  const [users, setUsers] = useState([])
+  const [shops, setShops] = useState([])
+  const [orders, setOrders] = useState([])
+  const [carts, setCarts] = useState([])
+  const [promotions, setPromotions] = useState([])
+  const [promoForm, setPromoForm] = useState({ code: '', discount: '', expiresAt: '' })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const loadData = async () => {
+    setLoading(true)
+    try {
+      const snapshots = await Promise.all([
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'shops')),
+        getDocs(collection(db, 'orders')),
+        getDocs(collection(db, 'carts')),
+        getDocs(collection(db, 'promotions')),
+      ])
+      setUsers(snapshots[0].docs.map((item) => ({ id: item.id, ...item.data() })))
+      setShops(snapshots[1].docs.map((item) => ({ id: item.id, ...item.data() })))
+      setOrders(snapshots[2].docs.map((item) => ({ id: item.id, ...item.data() })))
+      setCarts(snapshots[3].docs.map((item) => ({ id: item.id, ...item.data() })))
+      setPromotions(snapshots[4].docs.map((item) => ({ id: item.id, ...item.data() })))
+      setError('')
+    } catch (loadError) {
+      setError(loadError.code === 'permission-denied' ? 'Không đủ quyền đọc dữ liệu quản trị.' : 'Không thể tải dữ liệu quản trị.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadData() }, [])
+
+  const approveShop = async (shop) => {
+    try {
+      const batch = writeBatch(db)
+      batch.update(doc(db, 'shops', shop.id), { status: 'active', reviewedAt: serverTimestamp() })
+      batch.update(doc(db, 'users', shop.userId), { role: 'shop', updatedAt: serverTimestamp() })
+      await batch.commit()
+      await loadData()
+    } catch (actionError) { setError('Không thể duyệt shop.') }
+  }
+
+  const updateUser = async (user, changes) => {
+    try { await updateDoc(doc(db, 'users', user.id), { ...changes, updatedAt: serverTimestamp() }); await loadData() } catch (actionError) { setError('Không thể cập nhật account.') }
+  }
+
+  const updateOrder = async (order, status) => {
+    try { await updateDoc(doc(db, 'orders', order.id), { status, updatedAt: serverTimestamp() }); await loadData() } catch (actionError) { setError('Không thể cập nhật đơn hàng.') }
+  }
+
+  const createPromotion = async (event) => {
+    event.preventDefault()
+    try {
+      const promotionRef = doc(collection(db, 'promotions'))
+      await setDoc(promotionRef, { promotionId: promotionRef.id, code: promoForm.code.trim().toUpperCase(), discount: Number(promoForm.discount), expiresAt: promoForm.expiresAt, status: 'active', createdAt: serverTimestamp() })
+      setPromoForm({ code: '', discount: '', expiresAt: '' })
+      await loadData()
+    } catch (actionError) { setError('Không thể tạo khuyến mãi.') }
+  }
+
+  const currentMonth = new Date()
+  const monthlyRevenue = orders.reduce((total, order) => {
+    const createdAt = order.createdAt?.toDate ? order.createdAt.toDate() : order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000) : null
+    if (!createdAt || createdAt.getFullYear() !== currentMonth.getFullYear() || createdAt.getMonth() !== currentMonth.getMonth() || order.status === 'cancelled') return total
+    return total + Number(order.total || 0)
+  }, 0)
+
+  const viewTitles = { orders: 'Quản lý đơn hàng', carts: 'Theo dõi giỏ hàng', promotions: 'Quản lý khuyến mãi' }
+  return <main className="admin-page"><div className="admin-page-inner"><header className="admin-workspace-header"><div><span className="section-kicker">NOVA Market Admin</span><h2>{activeView === 'overview' ? 'Tổng quan vận hành' : viewTitles[activeView]}</h2><p className="admin-subtitle">Quản trị sàn thương mại điện tử</p></div><div className="admin-header-actions"><button className="outline-button" onClick={loadData}>Làm mới</button><button className="outline-button" onClick={onClose}><ArrowRight size={15} /> Về sàn</button></div></header>{error && <div className="auth-error">{error}</div>}{loading ? <p className="admin-empty">Đang tải dữ liệu...</p> : <div className="admin-layout"><aside className="admin-sidebar"><span className="admin-sidebar-label">Điều hành</span><button className={activeView === 'overview' ? 'admin-nav active' : 'admin-nav'} onClick={() => setActiveView('overview')}><Star size={16} /> Tổng quan</button><button className={activeView === 'orders' ? 'admin-nav active' : 'admin-nav'} onClick={() => setActiveView('orders')}><ShoppingBag size={16} /> Đơn hàng <b>{orders.length}</b></button><button className={activeView === 'carts' ? 'admin-nav active' : 'admin-nav'} onClick={() => setActiveView('carts')}><Heart size={16} /> Giỏ hàng <b>{carts.length}</b></button><button className={activeView === 'promotions' ? 'admin-nav active' : 'admin-nav'} onClick={() => setActiveView('promotions')}><Ticket size={16} /> Khuyến mãi <b>{promotions.filter((promotion) => promotion.status === 'active').length}</b></button></aside><section className="admin-content">{activeView === 'overview' && <><div className="admin-stats"><div><strong>{formatPrice(monthlyRevenue)}</strong><span>Doanh thu tháng này</span></div><div><strong>{users.length}</strong><span>Tổng account</span></div><div><strong>{shops.filter((shop) => shop.status === 'pending').length}</strong><span>Shop chờ duyệt</span></div><div><strong>{shops.filter((shop) => shop.status === 'active').length}</strong><span>Shop hoạt động</span></div></div><div className="admin-section"><div className="admin-section-title"><h3>Quản lý account</h3><span className="admin-caption">Nâng user lên shop hoặc vô hiệu hóa</span></div><div className="admin-list">{users.map((user) => <div className="admin-row" key={user.id}><div><strong>{user.name || 'Chưa có tên'}</strong><small>{user.email} · {user.phone || 'Chưa có SĐT'}</small></div><div className="admin-row-actions"><span className="role-badge">{user.role || 'customer'}</span>{user.role === 'customer' && <button className="approve-button" onClick={() => updateUser(user, { role: 'shop' })}>Nâng lên shop</button>}{user.role !== 'admin' && <button className="reject-button" onClick={() => updateUser(user, { status: user.status === 'blocked' ? 'active' : 'blocked' })}>{user.status === 'blocked' ? 'Mở khóa' : 'Vô hiệu hóa'}</button>}</div></div>)}</div></div><div className="admin-section"><div className="admin-section-title"><h3>Quản lý shop</h3><span className="admin-caption">Duyệt hồ sơ người bán</span></div><div className="admin-list">{shops.length === 0 ? <p className="admin-empty">Chưa có shop.</p> : shops.map((shop) => <div className="admin-row" key={shop.id}><div><strong>{shop.shopName}</strong><small>{shop.description} · Chủ: {shop.userId}</small></div><div className="admin-row-actions"><span className={`status-badge ${shop.status}`}>{shop.status === 'pending' ? 'Chờ duyệt' : shop.status === 'active' ? 'Đã duyệt' : 'Từ chối'}</span>{shop.status === 'pending' && <button className="approve-button" onClick={() => approveShop(shop)}>Duyệt</button>}</div></div>)}</div></div></>}{activeView === 'orders' && <div className="admin-section"><div className="admin-list">{orders.length === 0 ? <p className="admin-empty">Chưa có đơn hàng.</p> : orders.map((order) => <div className="admin-row" key={order.id}><div><strong>#{order.id}</strong><small>Khách: {order.userId || 'Chưa có'} · {formatPrice(Number(order.total || 0))}</small></div><select className="admin-select" value={order.status || 'pending'} onChange={(event) => updateOrder(order, event.target.value)}><option value="pending">Chờ xử lý</option><option value="paid">Đã thanh toán</option><option value="shipping">Đang giao</option><option value="completed">Hoàn tất</option><option value="cancelled">Đã hủy</option></select></div>)}</div></div>}{activeView === 'carts' && <div className="admin-section"><div className="admin-list">{carts.length === 0 ? <p className="admin-empty">Chưa có giỏ hàng đang lưu.</p> : carts.map((cart) => <div className="admin-row" key={cart.id}><div><strong>Giỏ hàng của {cart.userId}</strong><small>{Array.isArray(cart.items) ? `${cart.items.length} sản phẩm` : 'Chưa có sản phẩm'}</small></div><span className="status-badge active">Đang lưu</span></div>)}</div></div>}{activeView === 'promotions' && <div className="admin-section"><form className="promotion-form" onSubmit={createPromotion}><input value={promoForm.code} onChange={(event) => setPromoForm({ ...promoForm, code: event.target.value })} placeholder="Mã NOVA10" required /><input value={promoForm.discount} onChange={(event) => setPromoForm({ ...promoForm, discount: event.target.value })} type="number" min="1" placeholder="Giảm %" required /><input value={promoForm.expiresAt} onChange={(event) => setPromoForm({ ...promoForm, expiresAt: event.target.value })} type="date" required /><button className="primary-button" type="submit">Tạo khuyến mãi</button></form><div className="admin-list">{promotions.length === 0 ? <p className="admin-empty">Chưa có khuyến mãi.</p> : promotions.map((promotion) => <div className="admin-row" key={promotion.id}><div><strong>{promotion.code} · Giảm {promotion.discount}%</strong><small>Hết hạn: {promotion.expiresAt || 'Không có'}</small></div><button className={promotion.status === 'active' ? 'approve-button' : 'reject-button'} onClick={() => updateDoc(doc(db, 'promotions', promotion.id), { status: promotion.status === 'active' ? 'inactive' : 'active' }).then(loadData)}>{promotion.status === 'active' ? 'Đang bật' : 'Đã tắt'}</button></div>)}</div></div>}</section></div>}</div></main>
 }
 
 export default App

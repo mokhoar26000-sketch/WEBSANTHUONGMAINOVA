@@ -18,11 +18,44 @@ service cloud.firestore {
       allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow update: if isAdmin() || (signedIn() && request.auth.uid == userId
         && request.resource.data.userId == resource.data.userId
-        && request.resource.data.role == resource.data.role);
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.status == resource.data.status);
+      allow delete: if isAdmin();
+    }
+
+    match /shops/{shopId} {
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
     match /products/{productId} {
+      allow read: if true;
+      allow create: if isAdmin() || (signedIn() && exists(/databases/$(database)/documents/shops/$(request.resource.data.shopId))
+        && get(/databases/$(database)/documents/shops/$(request.resource.data.shopId)).data.userId == request.auth.uid
+        && get(/databases/$(database)/documents/shops/$(request.resource.data.shopId)).data.status == 'active');
+      allow update, delete: if isAdmin() || (signedIn()
+        && request.resource.data.shopId == resource.data.shopId
+        && exists(/databases/$(database)/documents/shops/$(resource.data.shopId))
+        && get(/databases/$(database)/documents/shops/$(resource.data.shopId)).data.userId == request.auth.uid
+        && get(/databases/$(database)/documents/shops/$(resource.data.shopId)).data.status == 'active');
+    }
+
+    match /orders/{orderId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    match /carts/{cartId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin() || (signedIn() && request.resource.data.userId == request.auth.uid);
+    }
+
+    match /promotions/{promotionId} {
       allow read: if true;
       allow write: if isAdmin();
     }
