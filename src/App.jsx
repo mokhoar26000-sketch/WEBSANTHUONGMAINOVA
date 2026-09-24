@@ -56,6 +56,7 @@ function App() {
   const [authOpen, setAuthOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
+  const [productOpen, setProductOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
   const [authReady, setAuthReady] = useState(false)
@@ -138,6 +139,7 @@ function App() {
           <a href="#food">Thực phẩm</a>
           <a href="#pet">Thú cưng</a>
           {currentUser && userProfile?.role !== 'shop' && userProfile?.role !== 'admin' && <button className="seller-link nav-button" onClick={() => setShopOpen(true)}>Đăng ký bán hàng <ArrowRight size={14} /></button>}
+          {userProfile?.role === 'shop' && <button className="seller-link nav-button" onClick={() => setProductOpen(true)}>Sản phẩm của tôi <ArrowRight size={14} /></button>}
           {userProfile?.role === 'admin' && <a className="seller-link" href={`${import.meta.env.BASE_URL}admin`}>Quản lý <ArrowRight size={14} /></a>}
         </nav>
       </header>
@@ -185,6 +187,7 @@ function App() {
       {cartOpen && <div className="drawer-backdrop" onClick={() => setCartOpen(false)}><aside className="cart-drawer" onClick={(event) => event.stopPropagation()}><div className="drawer-header"><h2>Giỏ hàng <span>({cart.length})</span></h2><button onClick={() => setCartOpen(false)} aria-label="Đóng"><X size={21} /></button></div>{cart.length === 0 ? <div className="empty-cart"><ShoppingBag size={38} /><h3>Giỏ hàng đang trống</h3><p>Thêm món đồ đầu tiên để bắt đầu hành trình của bạn.</p></div> : <><div className="cart-items">{cart.map((product, index) => <div className="cart-item" key={`${product.id}-${index}`}><img src={product.image} alt="" /><div><strong>{product.name}</strong><span>{formatPrice(product.price)}</span></div></div>)}</div><div className="cart-total"><span>Tạm tính</span><strong>{formatPrice(total)}</strong></div><button className="primary-button checkout-button">Tiến hành thanh toán <ArrowRight size={17} /></button></>}</aside></div>}
       {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onSignedIn={() => setAuthOpen(false)} />}
       {shopOpen && <ShopRegistrationModal currentUser={currentUser} profile={userProfile} onClose={() => setShopOpen(false)} />}
+      {productOpen && <ProductManager currentUser={currentUser} onClose={() => setProductOpen(false)} />}
       {profileOpen && <ProfileModal profile={userProfile} firebaseUser={currentUser} onClose={() => setProfileOpen(false)} onSignOut={() => { setProfileOpen(false); signOut(auth) }} />}
     </div>
   )
@@ -279,6 +282,67 @@ function ShopRegistrationModal({ currentUser, profile, onClose }) {
   }
 
   return <div className="auth-backdrop" onClick={onClose}><section className="auth-modal shop-registration-modal" onClick={(event) => event.stopPropagation()}><button className="auth-close" onClick={onClose} aria-label="Đóng"><X size={20} /></button><div className="auth-brand"><span className="brand-mark">N</span><span>NOVA<span className="brand-dot">.</span></span></div><span className="section-kicker">Kênh người bán</span><h2>Đăng ký mở shop</h2><p className="auth-subtitle">Hồ sơ sẽ ở trạng thái chờ duyệt. Chỉ admin mới có quyền phê duyệt shop.</p><form onSubmit={submit}><label>Tên shop<input value={form.shopName} onChange={(event) => setForm({ ...form, shopName: event.target.value })} placeholder="Shop Gia Dụng HomeCare" required /></label><label>Mô tả shop<input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Bạn kinh doanh mặt hàng gì?" required /></label><label>Số điện thoại<input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="0901 234 567" type="tel" required /></label><label>Địa chỉ lấy hàng<input value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} placeholder="Địa chỉ shop" required /></label>{message && <div className={`auth-error ${message.startsWith('Đã gửi') ? 'auth-success' : ''}`}>{message}</div>}<button className="primary-button auth-submit" disabled={loading}>{loading ? 'Đang gửi...' : 'Gửi hồ sơ xét duyệt'}</button></form><small className="auth-note">Tài khoản: {profile?.email || currentUser?.email}</small></section></div>
+}
+
+function ProductManager({ currentUser, onClose }) {
+  const [shop, setShop] = useState(null)
+  const [products, setProducts] = useState([])
+  const [form, setForm] = useState({ name: '', category: 'thời trang', price: '', description: '', stock: '', imageUrl: '', sourceUrl: '' })
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  const loadProducts = async () => {
+    try {
+      const shopSnapshot = await getDocs(collection(db, 'shops'))
+      const currentShop = shopSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })).find((item) => item.userId === currentUser.uid && item.status === 'active')
+      if (!currentShop) {
+        setMessage('Tài khoản chưa có shop được admin duyệt.')
+        return
+      }
+      setShop(currentShop)
+      const productSnapshot = await getDocs(collection(db, 'products'))
+      setProducts(productSnapshot.docs.map((item) => ({ id: item.id, ...item.data() })).filter((item) => item.shopId === currentShop.shopId))
+    } catch (error) {
+      setMessage('Không thể tải sản phẩm của shop.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadProducts() }, [])
+
+  const submit = async (event) => {
+    event.preventDefault()
+    if (!shop) return
+    try {
+      const productRef = doc(collection(db, 'products'))
+      await setDoc(productRef, {
+        productId: productRef.id,
+        shopId: shop.shopId,
+        shopAddress: shop.address,
+        userId: currentUser.uid,
+        productName: form.name.trim(),
+        category: form.category,
+        price: Number(form.price),
+        description: form.description.trim(),
+        stock: Number(form.stock),
+        imageUrls: form.imageUrl.trim() ? [form.imageUrl.trim()] : [],
+        sourceUrl: form.sourceUrl.trim(),
+        sourcePlatform: form.sourceUrl.includes('shopee') ? 'shopee' : 'manual',
+        affiliateUrl: '',
+        status: 'active',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      setForm({ name: '', category: 'thời trang', price: '', description: '', stock: '', imageUrl: '', sourceUrl: '' })
+      setMessage('Đã thêm sản phẩm vào shop.')
+      await loadProducts()
+    } catch (error) {
+      setMessage(error.code === 'permission-denied' ? 'Shop chưa được admin duyệt hoặc rules chưa được cập nhật.' : 'Không thể thêm sản phẩm.')
+    }
+  }
+
+  return <div className="auth-backdrop" onClick={onClose}><section className="product-manager" onClick={(event) => event.stopPropagation()}><div className="product-manager-header"><div><span className="section-kicker">Kênh người bán</span><h2>Quản lý sản phẩm</h2><p className="auth-subtitle">{shop?.shopName || 'Đang tải shop...'}</p></div><button className="auth-close" onClick={onClose} aria-label="Đóng"><X size={20} /></button></div><div className="affiliate-note"><strong>Nhập sản phẩm từ link Shopee</strong><span>Link chỉ được lưu làm nguồn tham khảo. Muốn tự lấy tên, giá, ảnh và tạo link hoa hồng cần kết nối Shopee Affiliate API chính thức.</span></div><form className="product-form" onSubmit={submit}><label>Tên sản phẩm<input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></label><label>Loại sản phẩm<select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>thời trang</option><option>đồ gia dụng</option><option>đồ điện tử</option><option>thực phẩm chức năng</option><option>đồ ăn</option><option>đồ chơi thú cưng</option><option>dụng cụ</option></select></label><label>Giá bán<input type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} required /></label><label>Số lượng<input type="number" min="0" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} required /></label><label className="wide-field">Chi tiết sản phẩm<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} required /></label><label>Link hình ảnh<input type="url" value={form.imageUrl} onChange={(event) => setForm({ ...form, imageUrl: event.target.value })} placeholder="https://..." /></label><label>Link Shopee nguồn<input type="url" value={form.sourceUrl} onChange={(event) => setForm({ ...form, sourceUrl: event.target.value })} placeholder="https://shopee.vn/..." /></label><button className="primary-button product-submit" type="submit">Thêm sản phẩm</button></form>{message && <div className="auth-error auth-success">{message}</div>}<div className="shop-products"><h3>Sản phẩm của shop ({products.length})</h3>{loading ? <p className="admin-empty">Đang tải...</p> : products.length === 0 ? <p className="admin-empty">Shop chưa có sản phẩm.</p> : products.map((product) => <div className="admin-row" key={product.id}><div><strong>{product.productName}</strong><small>{product.category} · {formatPrice(Number(product.price || 0))} · Còn {product.stock}</small></div><span className="status-badge active">Đang bán</span></div>)}</div></section></div>
 }
 
 function AdminAccessDenied({ onBack }) {
