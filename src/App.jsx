@@ -42,6 +42,8 @@ const products = [
 ]
 
 const formatPrice = (value) => `${value.toLocaleString('vi-VN')}đ`
+const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+const appHomePath = import.meta.env.BASE_URL
 
 function App() {
   const [catalog, setCatalog] = useState(products)
@@ -102,11 +104,11 @@ function App() {
   const toggleLike = (id) => setLiked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
   const total = cart.reduce((sum, product) => sum + product.price, 0)
 
-  if (window.location.pathname.replace(/\/+$/, '') === '/admin') {
+  if (window.location.pathname.replace(/\/+$/, '') === `${appBasePath}/admin` || (appBasePath === '' && window.location.pathname.replace(/\/+$/, '') === '/admin')) {
     if (!authReady) return <div className="admin-loading">Đang kiểm tra quyền truy cập...</div>
-    if (!currentUser || !userProfile) return <AdminAccessDenied onBack={() => window.location.assign('/')} />
-    if (userProfile.role !== 'admin') return <AdminAccessDenied onBack={() => window.location.assign('/')} />
-    return <AdminWorkspace onClose={() => window.location.assign('/')} />
+    if (!currentUser || !userProfile) return <AdminAccessDenied onBack={() => window.location.assign(appHomePath)} />
+    if (userProfile.role !== 'admin') return <AdminAccessDenied onBack={() => window.location.assign(appHomePath)} />
+    return <AdminWorkspace onClose={() => window.location.assign(appHomePath)} />
   }
 
   return (
@@ -136,7 +138,7 @@ function App() {
           <a href="#food">Thực phẩm</a>
           <a href="#pet">Thú cưng</a>
           {currentUser && userProfile?.role !== 'shop' && userProfile?.role !== 'admin' && <button className="seller-link nav-button" onClick={() => setShopOpen(true)}>Đăng ký bán hàng <ArrowRight size={14} /></button>}
-          {userProfile?.role === 'admin' && <a className="seller-link" href="/admin">Quản lý <ArrowRight size={14} /></a>}
+          {userProfile?.role === 'admin' && <a className="seller-link" href={`${import.meta.env.BASE_URL}admin`}>Quản lý <ArrowRight size={14} /></a>}
         </nav>
       </header>
 
